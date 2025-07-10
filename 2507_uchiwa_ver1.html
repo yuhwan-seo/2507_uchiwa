@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>熊谷市熱中症ハザードマップ</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v7.4.0/ol.css" />
+  <style>
+    html, body, #map {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100vh;
+    }
+
+    #map-legend {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background-color: rgba(255, 255, 255, 0.85);
+      color: #000;
+      padding: 10px 14px;
+      border-radius: 4px;
+      font-size: 14px;
+      max-width: 320px;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+      line-height: 1.4;
+      z-index: 900;
+    }
+
+    .legend-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .legend-body {
+      font-size: 13px;
+    }
+
+    .legend-scale {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 10px;
+    }
+
+    .legend-color {
+      width: 20px;
+      height: 28px;
+      color: #fff;
+      font-size: 10px;
+      text-align: center;
+      line-height: 28px;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+
+    #locate-button {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background-color: #ffffffcc;
+      color: #000;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    }
+
+    #locate-button:hover {
+      background-color: #f0f0f0;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <button id="locate-button">現在地に移動</button>
+
+  <div id="map-legend">
+    <div class="legend-title">熊谷市熱中症ハザードマップ</div>
+    <div class="legend-scale">
+      <div class="legend-color" style="background-color: #30123b;">1</div>
+      <div class="legend-color" style="background-color: #4662d8;">2</div>
+      <div class="legend-color" style="background-color: #35abf8;">3</div>
+      <div class="legend-color" style="background-color: #1be5b5;">4</div>
+      <div class="legend-color" style="background-color: #74fe5d;">5</div>
+      <div class="legend-color" style="background-color: #c9ef34;">6</div>
+      <div class="legend-color" style="background-color: #fbb938;">7</div>
+      <div class="legend-color" style="background-color: #f56918;">8</div>
+      <div class="legend-color" style="background-color: #c92903;">9</div>
+      <div class="legend-color" style="background-color: #7a0403;">10</div>
+    </div>
+    <div class="legend-body">
+      <br />
+      ©立正大学地球環境科学部<br />
+      環境システム学科　ソ研究室<br />
+      yuhwan.seo@rissho-univ.jp
+    </div>
+  </div>
+
+  <script type="module">
+    import Map from 'https://cdn.jsdelivr.net/npm/ol@v7.4.0/Map.js';
+    import View from 'https://cdn.jsdelivr.net/npm/ol@v7.4.0/View.js';
+    import TileLayer from 'https://cdn.jsdelivr.net/npm/ol@v7.4.0/layer/Tile.js';
+    import XYZ from 'https://cdn.jsdelivr.net/npm/ol@v7.4.0/source/XYZ.js';
+    import ImageLayer from 'https://cdn.jsdelivr.net/npm/ol@v7.4.0/layer/Image.js';
+    import ImageStatic from 'https://cdn.jsdelivr.net/npm/ol@v7.4.0/source/ImageStatic.js';
+    import {get as getProjection} from 'https://cdn.jsdelivr.net/npm/ol@v7.4.0/proj.js';
+
+    const extent = [
+      139.2893563511045878,
+      36.0694922941799163,
+      139.4476904040611483,
+      36.2544362940691727
+    ];
+
+    const map = new Map({
+      target: 'map',
+      layers: [
+        new TileLayer({
+          source: new XYZ({
+            url: 'https://{a-c}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            crossOrigin: 'anonymous'
+          })
+        }),
+        new ImageLayer({
+          source: new ImageStatic({
+            url: 'https://raw.githubusercontent.com/yuhwan-seo/2507_uchiwa/main/WBGT2014_2023_10L.png',
+            imageExtent: extent,
+            projection: getProjection('EPSG:4326')
+          }),
+          opacity: 0.8
+        })
+      ],
+      view: new View({
+        projection: 'EPSG:4326',
+        center: [(extent[0] + extent[2]) / 2, (extent[1] + extent[3]) / 2],
+        zoom: 13
+      })
+    });
+
+    // 現在地に移動ボタンの処理
+    document.getElementById('locate-button').addEventListener('click', () => {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const lon = position.coords.longitude;
+            const lat = position.coords.latitude;
+            map.getView().animate({
+              center: [lon, lat],
+              zoom: 15,
+              duration: 1000
+            });
+          },
+          (error) => {
+            alert('位置情報の取得に失敗しました：' + error.message);
+          }
+        );
+      } else {
+        alert('このブラウザは位置情報取得に対応していません。');
+      }
+    });
+  </script>
+</body>
+</html>
