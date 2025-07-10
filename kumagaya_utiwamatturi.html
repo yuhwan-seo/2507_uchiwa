@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>熊谷市温度マップ</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body { padding: 0; margin: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        #info { position: absolute; top: 10px; left: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        .legend { padding: 6px 8px; background: rgba(255,255,255,0.9); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; width: 300px; }
+        .legend i { width: 20px; height: 20px; display: inline-block; }
+        #getLocationBtn, #cancelLocationBtn { 
+            position: absolute; 
+            left: 10px; 
+            z-index: 1000; 
+            padding: 10px; 
+            border-radius: 5px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #getLocationBtn:hover, #cancelLocationBtn:hover {
+            background-color: #45a049;
+        }
+        #getLocationBtn { top: 60px; }
+        #cancelLocationBtn { top: 110px; display: none; }
+        #loading { 
+            display: none; 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            transform: translate(-50%, -50%); 
+            z-index: 1000; 
+            background-color: rgba(255, 255, 255, 0.9); 
+            padding: 20px; 
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(0,0,0,0.2);
+        }
+        #loadingProgress {
+            width: 100%;
+            margin-top: 10px;
+        }
+        @media (max-width: 600px) {
+            #map { height: 80vh; }
+            #info, #getLocationBtn, #cancelLocationBtn {
+                font-size: 14px;
+                padding: 8px;
+            }
+            .legend { font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+        <div id="map"></div>
+        <div id="info">位置情報: 未取得</div>
+        <div id="loading">Loading...<br><progress id="loadingProgress" value="0" max="100"></progress></div>
+        <div id="buttonContainer">
+            <br><button id="getLocationBtn">現在地を取得</button>
+            <button id="cancelLocationBtn">位置情報の取得をキャンセル</button>
+        </div>
+        <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+        <script src="https://unpkg.com/leaflet-omnivore@latest/leaflet-omnivore.min.js"></script>
+    <script>
+        const KUMAGAYA_STATION = [36.1406, 139.3881];
+        const map = L.map('map', {
+            tap: true,
+            tapTolerance: 15
+        }).setView(KUMAGAYA_STATION, 15);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        const geoTiffUrl = 'https://raw.githubusercontent.com/masimama/kumagaya_temp/main/202407201500_temp.tif';
+        const kmlUrl = 'https://raw.githubusercontent.com/masimama/kumagaya_temp/main/Hikage.kml'; // KMLファイルのURL
+        let temperatureData;
+        let watchId = null;
+        let locationMarker = null;
+
+        // KMLファイルを読み込み、マップに追加
+       // KMLファイルを読み込み、マップに追加
+       function loadKML() {
+            omnivore.kml(kmlUrl)
+                .on('ready', function() {
+                    const kmlLayer = this;
+                    map.addLayer(kmlLayer);
+                    const kmlBounds = kmlLayer.getBounds();
+                    map.fitBounds(kmlBounds);
+
+                    // スタイルを変更する
+                    kmlLayer.eachLayer(function(layer) {
+                        if (layer.setStyle) {
+                            layer.setStyle({
+                                color: 'blak',
+                                weight: 2,
+                                opacity: 0.5
+                            });
+                        }
+                    });
+
+                    if (temperatureData) {
+                        clipKMLToTemperatureBounds(kmlLayer, temperatureData.bbox);
+                    }
+                })
+                .on('error', function() {
+                    console.error('Error loading KML file.');
+                });
+        }
+
+        // KMLデータを気温データの範囲にクリップする
+        function clipKMLToTemperatureBounds(kmlLayer, bbox) {
+            const [[minLat, minLng], [maxLat, maxLng]] = [[bbox[1], bbox[0]], [bbox[3], bbox[2]]];
+
+            kmlLayer.eachLayer(function(layer) {
+                if (layer.getLatLngs) {
+                    const latLngs = layer.getLatLngs();
+                    const clippedLatLngs = latLngs.map(latlng => 
+                        latlng.filter(point => 
+                            point.lat >= minLat && point.lat <= maxLat &&
+                            point.lng >= minLng && point.lng <= maxLng
+                        )
+                    );
+                    layer.setLatLngs(clippedLatLngs);
+                }
+            });
+        }
+
+        async function loadGeoTIFF() {
+            document.getElementById('loading').style.display = 'block';
+            try {
+                const response = await fetch(geoTiffUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+                const image = await tiff.getImage();
+                const bbox = image.getBoundingBox();
+                const rasters = await image.readRasters();
+                const temperatures = rasters[0];
+
+                temperatureData = {
+                    bbox,
+                    temperatures,
+                    width: image.getWidth(),
+                    height: image.getHeight()
+                };
+
+                await displayTemperatureMap();
+            } catch (error) {
+                console.error('Error loading GeoTIFF:', error);
+                alert(`温度データの読み込みに失敗しました: ${error.message}`);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        async function displayTemperatureMap() {
+            const { bbox, temperatures, width, height } = temperatureData;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+            const rgba = imageData.data;
+
+            const minTemp = Math.min(...temperatures);
+            const maxTemp = Math.max(...temperatures);
+
+            const chunkSize = 10000;
+            const totalChunks = Math.ceil(temperatures.length / chunkSize);
+
+            for (let chunk = 0; chunk < totalChunks; chunk++) {
+                const start = chunk * chunkSize;
+                const end = Math.min((chunk + 1) * chunkSize, temperatures.length);
+
+                for (let i = start; i < end; i++) {
+                    const temp = temperatures[i];
+                    const [r, g, b] = tempToColor(temp, minTemp, maxTemp);
+                    const index = i * 4;
+                    rgba[index] = r;
+                    rgba[index + 1] = g;
+                    rgba[index + 2] = b;
+                    // 色に応じて透明度を調整する
+                    const transparency = calculateTransparency(temp, minTemp, maxTemp);
+                    rgba[index + 3] = Math.round(transparency * 255);
+                }
+
+                document.getElementById('loadingProgress').value = ((chunk + 1) / totalChunks) * 100;
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            L.imageOverlay(canvas.toDataURL(), [[bbox[1], bbox[0]], [bbox[3], bbox[2]]], { opacity: 0.7 }).addTo(map);
+
+            addLegend(minTemp, maxTemp);
+        }
+
+        function tempToColor(temp, minTemp, maxTemp) {
+            const ratio = (temp - minTemp) / (maxTemp - minTemp);
+            const hue = (1 - ratio) * 150; // 色相を0から240の範囲で変化させる
+            return hslToRgb(hue, 100+hue, 50);
+        }
+
+        function hslToRgb(h, s, l) {
+            s /= 100;
+            l /= 100;
+            const k = n => (n + h / 30) % 12;
+            const a = s * Math.min(l, 1 - l);
+            const f = n =>
+                l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+            return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+        }
+
+        function calculateTransparency(temp, minTemp, maxTemp) {
+            const minOpacity = 0.5;
+            const maxOpacity = 0.8;
+            const range = maxTemp - minTemp;
+            const normalizedTemp = (temp - minTemp) / range;
+            return minOpacity + normalizedTemp * (maxOpacity - minOpacity);
+        }
+
+        function addLegend(minTemp, maxTemp) {
+    const legend = L.control({ position: 'bottomleft' });
+
+    legend.onAdd = function (map) {
+        const div = L.DomUtil.create('div', 'legend');
+        div.style.width = '170px';
+
+        div.innerHTML += '<strong>気温</strong><br>';
+        for (let temp = minTemp; temp <= maxTemp; temp += 0.1) {
+            const [r, g, b] = tempToColor(temp, minTemp, maxTemp);
+            const transparency = calculateTransparency(temp, minTemp, maxTemp);
+            div.innerHTML += `<div style="background-color: rgba(${r},${g},${b},${transparency}); height: 10px; width: 5px; display: inline-block;"></div>`;
+        }
+        div.innerHTML += `<span style="float: left; color: rgb(${tempToColor(minTemp, minTemp, maxTemp).join(',')})">${minTemp.toFixed(1)}°C</span>
+                          <span style="float: right; color: rgb(${tempToColor(maxTemp, minTemp, maxTemp).join(',')})">${maxTemp.toFixed(1)}°C</span><br>`;
+        div.innerHTML += '<br><strong>7月20日15時頃</strong>';
+        div.innerHTML += '<br>※グレーの影は5時間以上日陰の場所です。クールスポットとして利用してください。';
+
+        div.innerHTML += '<br><br>©立正大学地球環境科学部<br>環境システム学科後藤研究室';
+
+                          return div;
+    };
+
+    legend.addTo(map);
+}
+        
+
+function getTemperatureAt(lat, lng) {
+            const { bbox, width, height, temperatures } = temperatureData;
+            const [minLat, minLng, maxLat, maxLng] = bbox;
+            const x = Math.floor((lng - minLng) / (maxLng - minLng) * width);
+            const y = Math.floor((lat - minLat) / (maxLat - minLat) * height);
+            const index = y * width + x;
+            return temperatures[index] || null;
+        }
+
+        function getTemperatureAtPixel(lat, lng) {
+            const { bbox, width, height, temperatures } = temperatureData;
+            const [minLat, minLng, maxLat, maxLng] = bbox;
+            const x = Math.floor((lng - minLng) / (maxLng - minLng) * width);
+            const y = Math.floor((lat - minLat) / (maxLat - minLat) * height);
+            const index = y * width + x;
+            return temperatures[index] || null;
+        }
+
+        let clickMarker = null; // クリックした場所のマーカー用変数
+
+function displayInfo(e) {
+    const latlng = map.mouseEventToLatLng(e.originalEvent);
+    const { bbox, temperatures, width, height } = temperatureData;
+    const x = Math.floor((latlng.lng - bbox[0]) / (bbox[2] - bbox[0]) * width);
+    const y = Math.floor((latlng.lat - bbox[1]) / (bbox[3] - bbox[1]) * height);
+
+    if (x >= 0 && x < width && y >= 0 && y < height) {
+        const index = y * width + x;
+        const temp = temperatures[index];
+        document.getElementById('info').innerText = `気温: ${temp.toFixed(1)}°C`;
+
+        if (clickMarker) {
+            map.removeLayer(clickMarker); // 以前のマーカーを削除
+        }
+        clickMarker = L.marker([latlng.lat, latlng.lng]).addTo(map)
+            .bindPopup(`気温: ${temp.toFixed(1)}°C`)
+            .openPopup();
+    }
+}
+
+// マップがクリックされたときに displayInfo 関数を呼び出す
+map.on('click', displayInfo);
+
+        function showCurrentLocation(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+
+            if (locationMarker) {
+                locationMarker.setLatLng([lat, lng]);
+            } else {
+                locationMarker = L.marker([lat, lng])
+                    .addTo(map)
+                    .bindPopup('現在地')
+                    .openPopup();
+            }
+
+            map.setView([lat, lng], 15);
+
+            // 現在地の気温表示
+            const temp = getTemperatureAt(lat, lng);
+            const pixelValue = getTemperatureAtPixel(lat, lng);
+            if (temp !== null) {
+                document.getElementById('info').innerHTML = `現在地: 緯度 ${lat.toFixed(5)}, 経度 ${lng.toFixed(5)}<br>気温: 気温: ${temp.toFixed(1)}°C°C`;
+            } else {
+                document.getElementById('info').innerHTML = `現在地: 緯度 ${lat.toFixed(5)}, 経度 ${lng.toFixed(5)}<br>気温: データなし`;
+            }
+        }
+
+        function startWatching() {
+            if (navigator.geolocation) {
+                watchId = navigator.geolocation.watchPosition(showCurrentLocation, showError, { enableHighAccuracy: true });
+                document.getElementById('getLocationBtn').style.display = 'none';
+                document.getElementById('cancelLocationBtn').style.display = 'block';
+            } else {
+                alert('このブラウザは位置情報取得をサポートしていません。');
+            }
+        }
+
+        function stopWatching() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+                if (locationMarker) {
+                    map.removeLayer(locationMarker);
+                    locationMarker = null;
+                }
+                document.getElementById('getLocationBtn').style.display = 'block';
+                document.getElementById('cancelLocationBtn').style.display = 'none';
+                document.getElementById('info').innerText = '位置情報の取得を停止しました。';
+            }
+        }
+
+        function showError(error) {
+            let errorMessage = '';
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    errorMessage = 'ユーザーが位置情報の取得を拒否しました。';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    errorMessage = '位置情報が利用できません。';
+                    break;
+                case error.TIMEOUT:
+                    errorMessage = '位置情報の取得がタイムアウトしました。';
+                    break;
+                case error.UNKNOWN_ERROR:
+                    errorMessage = '不明なエラーが発生しました。';
+                    break;
+            }
+            document.getElementById('info').innerText = `エラー: ${errorMessage}`;
+        }
+
+        map.on('click', displayInfo);
+
+        document.getElementById('getLocationBtn').addEventListener('click', startWatching);
+        document.getElementById('cancelLocationBtn').addEventListener('click', stopWatching);
+
+        loadGeoTIFF();
+        loadKML();
+    </script>
+</body>
+</html>
