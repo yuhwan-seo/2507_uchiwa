@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>熊谷市熱中症ハザードマップ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    #map { width: 100%; height: 98.8vh; margin: 0; padding: 0; }
+
+    #map-legend {
+      position: absolute;
+      bottom: 15px;
+      left: 20px;
+      background-color: rgba(255, 255, 255, 0.85);
+      color: #000;
+      padding: 10px 14px;
+      border-radius: 4px;
+      font-size: 14px;
+      max-width: 320px;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+      line-height: 1.4;
+      z-index: 900;
+    }
+
+    .legend-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .legend-body {font-size: 13px;}
+
+    .legend-scale {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 10px;
+    }
+
+    .legend-color {
+      width: 20px;
+      height: 28px;
+      color: #fff;
+      font-size: 10px;
+      text-align: center;
+      line-height: 28px;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="map-legend">
+    <div class="legend-title">熊谷市熱中症ハザードマップ</div>
+    <div class="legend-scale">
+      <div class="legend-color" style="background-color: #30123b;">1</div>
+      <div class="legend-color" style="background-color: #4662d8;">2</div>
+      <div class="legend-color" style="background-color: #35abf8;">3</div>
+      <div class="legend-color" style="background-color: #1be5b5;">4</div>
+      <div class="legend-color" style="background-color: #74fe5d;">5</div>
+      <div class="legend-color" style="background-color: #c9ef34;">6</div>
+      <div class="legend-color" style="background-color: #fbb938;">7</div>
+      <div class="legend-color" style="background-color: #f56918;">8</div>
+      <div class="legend-color" style="background-color: #c92903;">9</div>
+      <div class="legend-color" style="background-color: #7a0403;">10</div>
+    </div>
+    <div class="legend-body">
+      <br />
+      ©立正大学地球環境科学部<br />
+      環境システム学科　ソ研究室<br />
+      yuhwan.seo@rissho-univ.jp
+    </div>
+  </div>
+
+  <!-- ライブラリ読み込み -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/geotiff@0.4.1/dist/geotiff.browserify.js"></script>
+  <script src="https://unpkg.com/plotty@0.2.0/src/plotty.js"></script>
+  <script src="https://unpkg.com/leaflet-geotiff@0.2.0/leaflet-geotiff.js"></script>
+  <script src="https://unpkg.com/leaflet-geotiff@0.2.0/leaflet-geotiff-plotty.js"></script>
+
+  <script>
+    // 地図の初期化
+    const map = L.map('map').setView([36.1639, 139.3754], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // カスタムカラースケール定義
+    plotty.addColorScale("customWBGT",
+      [
+        "#30123b", "#4662d8", "#35abf8", "#1be5b5", "#74fe5d",
+        "#c9ef34", "#fbb938", "#f56918", "#c92903", "#7a0403"
+      ],
+      [
+        0.0, 0.1111, 0.2222, 0.3333, 0.4444,
+        0.5555, 0.6666, 0.7777, 0.8888, 1.0
+      ]
+    );
+
+    // GeoTIFFレイヤーの読み込み
+    const tiffUrl = "https://raw.githubusercontent.com/yuhwan-seo/2507_uchiwa/main/WBGT2014_2023_10L_4326_reduce.tif";
+
+    const tiffLayer = new L.LeafletGeotiff(tiffUrl, {
+      band: 0,
+      renderer: new L.LeafletGeotiff.Plotty({
+        colorScale: "customWBGT",
+        displayMin: 1,
+        displayMax: 10.1,
+        clampLow: false,
+        clampHigh: false
+      })
+    }).addTo(map);
+
+    // 「現在地取得」ボタンをマップに追加
+    var locateControl = L.control({position: 'topleft'});
+    locateControl.onAdd = function(map) {
+      var btn = L.DomUtil.create('button');
+      btn.innerHTML = '現在地取得';
+      btn.style.backgroundColor = 'white';
+      btn.style.padding = '10px';
+      btn.style.cursor = 'pointer';
+      L.DomEvent.disableClickPropagation(btn);
+
+      L.DomEvent.on(btn, 'click', function(e) {
+        L.DomEvent.stopPropagation(e);
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(function(position) {
+            var lat = position.coords.latitude;
+            var lng = position.coords.longitude;
+            var value = tiffLayer.getValueAtLatLng(lat, lng);
+            if (value != null) {
+              L.popup()
+                .setLatLng([lat, lng])
+                .setContent('熱中症危険度 : ' + value.toFixed(0))
+                .openOn(map);
+            }
+          }, function(error) {
+            alert('位置情報を取得できませんでした: ' + error.message);
+          });
+        } else {
+          alert('このブラウザでは位置情報がサポートされていません');
+        }
+      });
+
+      return btn;
+    };
+    locateControl.addTo(map);
+
+    // 地図クリックでラスタ値を取得して表示
+    map.on('click', function(e) {
+      var lat = e.latlng.lat;
+      var lng = e.latlng.lng;
+      var value = tiffLayer.getValueAtLatLng(lat, lng);
+      if (value != null) {
+        L.popup()
+          .setLatLng(e.latlng)
+          .setContent('熱中症危険度 : ' + value.toFixed(0))
+          .openOn(map);
+      }
+    });
+  </script>
+</body>
+</html>
